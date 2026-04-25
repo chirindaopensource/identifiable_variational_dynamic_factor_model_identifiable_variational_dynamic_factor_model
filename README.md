@@ -237,12 +237,12 @@ The pipeline returns a master dictionary and serializes artifacts to an `output/
 ```
 identifiable_variational_dynamic_factor_model_identifiable_variational_dynamic_factor_model/
 │
-├── identifiable_variational_dynamic_factor_model_identifiable_variational_dynamic_factor_model_draft.ipynb    # Main implementation notebook
-├── config.yaml                                                                                                # Master configuration file
-├── requirements.txt                                            												                       # Python package dependencies
+├── identifiable_variational_dynamic_factor_model_identifiable_variational_dynamic_factor_model_draft.ipynb     	# Main implementation notebook
+├── config.yaml																									# Master configuration file
+├── requirements.txt																								# Python package dependencies
 │
-├── LICENSE                                                     												                       # MIT Project License File
-└── README.md                                                   												                       # This file
+├── LICENSE																										# MIT Project License File
+└── README.md																										# This file
 ```
 
 ## Customization
