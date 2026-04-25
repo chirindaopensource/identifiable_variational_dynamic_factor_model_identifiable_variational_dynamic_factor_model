@@ -291,3 +291,7 @@ GitHub repository: https://github.com/chirindaopensource/identifiable_variationa
 
 -   Credit to **Minkey Chang and Jae-Young Kim** for the foundational research that forms the entire basis for this computational replication.
 -   This project is built upon the exceptional tools provided by the open-source community. Sincere thanks to the developers of the scientific Python ecosystem, particularly the **PyTorch**, **NumPy**, **Pandas**, and **Optuna** contributors.
+
+--
+
+*This README was generated based on the structure and content of the `identifiable_variational_dynamic_factor_model_identifiable_variational_dynamic_factor_model_draft.ipynb` notebook and follows best practices for research software documentation.*
