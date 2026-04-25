@@ -1,0 +1,193 @@
+# =============================================================================
+# requirements.txt
+#
+# Project : Conditionally Identifiable Latent Representation for Multivariate
+#           Time Series with Structural Dynamics (iVDFM)
+#
+# Reference: Chang, M., & Kim, J.-Y. (2026). Conditionally Identifiable Latent
+#            Representation for Multivariate Time Series with Structural
+#            Dynamics. arXiv:2603.22886. https://arxiv.org/abs/2603.22886
+#
+# Author  : CS Chirinda
+# Version : 1.0.0
+# License : MIT
+#
+# ── Dependency Philosophy ────────────────────────────────────────────────────
+# Only *direct* imports appearing in the source module are listed here.
+# Transitive dependencies (e.g., joblib←scikit-learn, sympy←torch,
+# sqlalchemy←optuna) are resolved by pip's dependency resolver and are
+# intentionally excluded to keep this file authoritative and minimal.
+#
+# Version specifiers follow the "compatible-range" convention:
+#   >=<min>  — the lowest version at which the required API surface is stable
+#   <<next-major>  — prevents silent breakage from major-version redesigns
+#
+# ── Python Version Requirement ───────────────────────────────────────────────
+# Python >= 3.11 is required.  Rationale:
+#   • importlib.metadata (stdlib, used directly) reached full PEP 566 / 658
+#     compliance in 3.11.
+#   • Exception groups and fine-grained traceback improvements (3.11+) benefit
+#     the module's logging and error-handling infrastructure.
+#   • torch >= 2.0 officially supports 3.11; numpy 2.x and pandas 3.x drop
+#     Python 3.9/3.10 in their test matrices.
+#   Enforce at runtime via:  python -c "import sys; assert sys.version_info >= (3,11)"
+# =============================================================================
+
+
+# ── Section 1: Scientific Computing Core ─────────────────────────────────────
+#
+# These three packages form the numerical substrate of the entire iVDFM stack.
+# They must be installed together and their versions kept mutually compatible
+# (numpy ABI stability is a hard constraint for both scipy and scikit-learn).
+# =============================================================================
+
+# numpy — N-dimensional array engine.
+#   Used for: NDArray arithmetic, np.linalg (eigenvalues of companion matrix,
+#   QR factorisation for diagonal-restriction analysis), np.fft (FFT-based
+#   impulse-response convolution), random seed control, and all tensor ↔ numpy
+#   bridge operations via torch.from_numpy / .numpy().
+#   Minimum 2.0.0: numpy 2.0 introduced the numpy 2.x C-API (NEP 50 type
+#   promotion rules), the new `numpy.dtypes` module, and removed a large set
+#   of deprecated aliases (np.bool, np.int, np.float, np.complex, np.object,
+#   np.str) that would cause silent errors in 1.x code migrated here.
+numpy>=2.0.0,<3.0.0
+
+# pandas — labelled time-series data management.
+#   Used for: pd.DataFrame / pd.Series construction, time-indexed rolling
+#   windows, CSV/Parquet I/O for benchmark datasets (ETTh1, Weather), and
+#   descriptive statistics in ablation reporting.
+#   Minimum 2.0.0: pandas 2.0 introduced the Copy-on-Write (CoW) memory model
+#   and the ArrowDtype backend, both of which affect in-place mutation
+#   semantics that the module's data-pipeline code depends on.
+pandas>=2.0.0,<4.0.0
+
+# scipy — scientific algorithms.
+#   Used for:
+#     scipy.stats          — Laplace / Normal / Student-t PDF/CDF evaluation
+#                            for the innovation prior; KL-divergence closed-form
+#                            computation under exponential-family parametrisation.
+#     scipy.optimize.linear_sum_assignment
+#                          — Kuhn-Munkres (Hungarian) algorithm for max-weight
+#                            bipartite matching during MCC (Mean Correlation
+#                            Coefficient) computation under permutation
+#                            invariance.
+#   Minimum 1.11.0: scipy 1.11 stabilised the `scipy.stats` hypothesis-testing
+#   API overhaul (method= kwarg) and the `linear_sum_assignment` gain/loss
+#   matrix sign convention used in permutation-aligned metric calculation.
+scipy>=1.11.0,<2.0.0
+
+
+# ── Section 2: Machine Learning Utilities ────────────────────────────────────
+#
+# scikit-learn provides classical ML decomposition methods used for
+# cold-start initialisation of the iVDFM latent states, not as the primary
+# modelling engine.
+# =============================================================================
+
+# scikit-learn — classical ML / decomposition.
+#   Used for:
+#     sklearn.decomposition.PCA          — single-window PCA warm-start for the
+#                                          initial factor state f_0, stabilising
+#                                          the early phases of variational
+#                                          training (see cold-start protocol).
+#     sklearn.decomposition.FactorAnalysis
+#                                        — OLS-style initialisation for AR
+#                                          coefficients in the companion-matrix
+#                                          transition block; provides a
+#                                          statistically grounded starting point
+#                                          for the diagonal AR parameters.
+#   Minimum 1.3.0: introduces the `set_output` transformer API and the
+#   validated `n_components` interface used in the PCA/FA warm-start routines.
+scikit-learn>=1.3.0,<2.0.0
+
+
+# ── Section 3: Deep Learning Framework ───────────────────────────────────────
+#
+# PyTorch is the sole automatic-differentiation and neural-network backend.
+# The entire iVDFM — encoder φ, RegimeNet, NaturalParamNet, diagonal-AR
+# transition block, injective decoder g — is implemented as nn.Module
+# subclasses and trained end-to-end via the ELBO objective with Adam.
+#
+# !! CRITICAL — GPU / CUDA INSTALLATION !!
+# The CPU-only wheel listed below is the default pip-installable package.
+# For GPU-accelerated training (strongly recommended for T > 500, N > 50),
+# install the CUDA-specific wheel *before* running `pip install -r
+# requirements.txt`, or replace this line with the appropriate wheel for
+# your CUDA version.  Official install selector:
+#   https://pytorch.org/get-started/locally/
+#
+# Examples (run ONE of these instead of letting pip resolve from PyPI):
+#   CUDA 12.4 :  pip install torch>=2.0.0,<3.0.0 \
+#                    --index-url https://download.pytorch.org/whl/cu124
+#   CUDA 11.8 :  pip install torch>=2.0.0,<3.0.0 \
+#                    --index-url https://download.pytorch.org/whl/cu118
+#   CPU-only   :  pip install torch>=2.0.0,<3.0.0 \
+#                    --index-url https://download.pytorch.org/whl/cpu
+# =============================================================================
+
+# torch — automatic differentiation and neural-network library.
+#   Used for:
+#     torch.nn.Module / nn.Linear / nn.LayerNorm / nn.Dropout
+#                                — iVDFM sub-module hierarchy.
+#     torch.nn.functional        — F.softmax (RegimeNet simplex projection),
+#                                  F.relu (ablation-validated activation),
+#                                  F.mse_loss (reconstruction term in ELBO).
+#     torch.optim.Adam           — primary optimiser with weight-decay for
+#                                  the full ELBO training loop.
+#     torch.utils.data.TensorDataset / DataLoader
+#                                — mini-batch iteration over (y, u, e)
+#                                  triplets; stride-based windowing for
+#                                  rolling-origin benchmark evaluation.
+#     Reparameterisation trick   — torch.distributions or manual loc + scale *
+#                                  eps sampling for the Laplace innovation prior.
+#   Minimum 2.0.0: introduces torch.compile (torch.dynamo backend) used for
+#   JIT compilation of the FFT impulse-response convolution loop; stable
+#   support for torch.linalg (eigenvalue-constrained companion matrix checks);
+#   and the revised TensorDataset type-checking that the DataLoader relies on.
+torch>=2.0.0,<3.0.0
+
+
+# ── Section 4: Hyperparameter Optimisation ───────────────────────────────────
+#
+# Optuna drives the ablation study and hyperparameter sensitivity sweeps
+# documented in the paper: innovation-prior type (Laplace vs Gaussian),
+# decoder architecture (MLP vs Linear), context granularity (timestep vs
+# regime), dropout rate, weight decay, temperature τ, number of factors r,
+# and AR order p.
+# =============================================================================
+
+# optuna — Bayesian hyperparameter optimisation framework.
+#   Used for: `optuna.create_study`, `study.optimize`, `trial.suggest_float`,
+#   `trial.suggest_int`, `trial.suggest_categorical` for structured HPO sweeps;
+#   `optuna.samplers.TPESampler` for efficient exploration of the
+#   high-dimensional configuration space; `optuna.pruners.MedianPruner` for
+#   early stopping of unpromising trials based on ELBO trajectory.
+#   Minimum 3.0.0: optuna 3.0 refactored the `Trial` and `Study` APIs,
+#   introducing `trial.suggest_float` (replacing deprecated `suggest_uniform`
+#   / `suggest_loguniform`) and `study.add_trial` patterns used in the
+#   ablation harness.
+optuna>=3.0.0,<5.0.0
+
+
+# ── Standard Library Note ─────────────────────────────────────────────────────
+# The following imports in the source module are part of the Python standard
+# library and require NO pip installation.  They are listed here solely for
+# auditability and are commented out to prevent any resolver confusion.
+#
+#   os                  — environment variable access, path manipulation
+#   gc                  — explicit garbage collection after large tensor frees
+#   copy                — deepcopy of model state dicts during checkpoint logic
+#   json                — serialisation of config dicts and metric artefacts
+#   math                — scalar math utilities (log, exp, pi, sqrt)
+#   hashlib             — deterministic run-ID hashing for reproducibility
+#   logging             — module-level structured logging (INFO / WARNING / ERROR)
+#   platform            — runtime environment fingerprinting (OS, CPU arch)
+#   traceback           — formatted exception capture in training loop handlers
+#   subprocess          — optional system-level utility calls (e.g., git hash)
+#   importlib.metadata  — runtime package-version introspection for audit logs
+#   pathlib.Path        — OS-agnostic filesystem path construction
+#   datetime            — timestamping of training runs and checkpoints
+#   typing              — Dict, Any, List, Tuple, Set, Union, Optional,
+#                         Callable, NamedTuple, Iterable — full type annotation
+#                         surface for static analysis (mypy, pyright)
+# =============================================================================
