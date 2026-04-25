@@ -1,0 +1,307 @@
+# ==============================================================================#
+#
+#  Conditionally Identifiable Latent Representation for Multivariate Time Series
+#  with Structural Dynamics
+#
+#  This module provides a complete, production-grade implementation of the
+#  analytical framework presented in "Conditionally Identifiable Latent
+#  Representation for Multivariate Time Series with Structural Dynamics" by
+#  Minkey Chang and Jae-Young Kim (2026). It delivers a computationally tractable
+#  system for extracting structurally unique and causally intervenable drivers
+#  from high-dimensional time series, enabling reliable, "what-if" decision
+#  support in complex, non-stationary systems.
+#
+#  Core Methodological Components:
+#  • Identifiable Variational Dynamic Factor Model (iVDFM) architecture
+#  • iVAE-style conditioning on the innovation process via RegimeNet
+#  • Linear diagonal dynamics for identifiability preservation
+#  • Companion-matrix formulation for higher-order AR(p) temporal dependence
+#  • Non-Gaussian (Laplace) exponential-family innovation priors
+#  • Injective measurement mapping for observation reconstruction
+#
+#  Technical Implementation Features:
+#  • Amortized variational inference with reparameterization
+#  • Deterministic regime embedding for non-stationary context adaptation
+#  • Do-calculus intervention logic for Impulse Response Function (IRF) estimation
+#  • Monte Carlo sampling for probabilistic forecasting and CRPS evaluation
+#  • Max-weight bipartite matching for permutation-invariant metric alignment
+#  • Comprehensive ablation and sensitivity testing framework
+#
+#  Paper Reference:
+#  Chang, M., & Kim, J.-Y. (2026). Conditionally Identifiable Latent Representation
+#  for Multivariate Time Series with Structural Dynamics. arXiv preprint
+#  arXiv:2603.22886. https://arxiv.org/abs/2603.22886
+#
+#  Author: CS Chirinda
+#  License: MIT
+#  Version: 1.0.0
+#
+# ==============================================================================#
+
+# ==============================================================================
+# iVDFM COMPLETE STUDY CONFIGURATION: DATA SCHEMAS, GENERATIVE MODEL, TRAINING, EVALUATION
+# ==============================================================================
+
+# --------------------------------------------------------------------------
+# 0) REPRODUCIBILITY & DETERMINISM CONTROLS
+# --------------------------------------------------------------------------
+REPRODUCIBILITY:
+  global_random_seed: 0                        # UNSPECIFIED IN MANUSCRIPT (choose and fix).
+  factor_recovery_num_sim: 10                  # Explicit in Appendix C (N_sim = 10).
+  causal_intervention_num_sim: 5               # Explicit in Appendix C (five simulations).
+  fixed_seed_list_factor_recovery: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # Implied by N_sim=10; UNSPECIFIED exact seeds.
+  fixed_seed_list_causal: [0, 1, 2, 3, 4]      # Implied by five sims; UNSPECIFIED exact seeds.
+  deterministic_gpu: true                      # UNSPECIFIED IN MANUSCRIPT (needed to reduce drift).
+  float_precision: "float32"                   # UNSPECIFIED IN MANUSCRIPT (must be fixed).
+
+# --------------------------------------------------------------------------
+# 1) IDENTIFIABILITY GUARDS (Eq. 1–3, Theorem A.2 assumptions)
+# --------------------------------------------------------------------------
+IDENTIFIABILITY_GUARDS:
+  innovation_prior_family: "Laplace"           # Motivated by Appendix B (Gaussian degeneracy).
+  innovation_prior_product_form: true          # Eq. (1) requires component-wise factorization.
+  innovation_prior_context_inputs: ["u_t", "e_t"] # Must not depend on y-history (Appendix A remarks).
+  is_diagonal_dynamics: true                   # Eq. (2) diagonal restriction.
+  decoder_injective_on_support: true           # Theorem A.2 assumption; enforcement method UNSPECIFIED.
+  observation_noise_family: "Gaussian"         # Appendix A uses Gaussian; main text says full support.
+  fixed_observation_noise_var_sigma2: 0.03     # Dataset-specific range (0.02–0.06) mentioned; exact per dataset UNSPECIFIED.
+  sigma2_learnable: false                      # Theorem A.2 assumption: sigma^2 fixed.
+  auxiliary_exogeneity_rule: "PriorNet must not take y as input"  # Appendix A remarks.
+  r_leq_N_required: true                       # Theorem A.2 assumption.
+
+# --------------------------------------------------------------------------
+# 2) RAW DATA SCHEMAS & DATASET REGISTRY
+# --------------------------------------------------------------------------
+RAW_DATA_SCHEMAS:
+  # Synthetic experiments (Section 4.1; Appendix C referenced)
+  SYNTHETIC:
+    dynamic_suite:
+      T: 200                                   # Explicit in Appendix C summary table.
+      N: 20                                    # Explicit in Table 1 caption.
+      r_true: 5                                # Explicit in Table 1 caption.
+      u_t_definition: "time_idx_int"           # UNSPECIFIED IN MANUSCRIPT (must fix).
+      nonlinear_mixing_g: "MLP"                # Mentioned as nonlinear mixing; exact form UNSPECIFIED.
+      innovation_distribution: "Laplace"       # Consistent with identifiability claims; exact params UNSPECIFIED.
+      DGP_parameters: "SEE_APPENDIX_C"         # UNSPECIFIED IN EXCERPT (must import from full paper/code).
+    static_suite:
+      T: 200                                   # Explicit in Appendix C summary.
+      N: 20                                    # Explicit in Table 1 caption.
+      r_true: 5                                # Explicit in Table 1 caption.
+      u_t_definition: "time_idx_int"           # UNSPECIFIED IN MANUSCRIPT (must fix).
+      latent_conditional_on_u: true            # Static iVAE-style suite.
+      nonlinear_mixing_g: "MLP"                # UNSPECIFIED exact form.
+      DGP_parameters: "SEE_APPENDIX_C"         # UNSPECIFIED IN EXCERPT.
+
+  # SCM experiments (Section 4.2; Appendix C described)
+  SCM:
+    T_default: 200                             # Table 2 uses T=200.
+    r_true: 3                                  # Table 2 caption implies r=3 in SCM experiments.
+    shock_distribution: "Laplace"              # Explicit: non-Gaussian shocks (e.g. Laplace).
+    A_stability_constraint: "spectral_radius<1" # Stated stable A; exact value UNSPECIFIED.
+    variants:
+      Base:
+        A_structure: "rho*I"
+        rho: 0.5                               # rho UNSPECIFIED IN MANUSCRIPT (placeholder 0.5).
+      Regime:
+        A_structure: "regime_dependent"
+        K_regimes: 2                           # UNSPECIFIED.
+      Chain:
+        A_structure: "upper_triangular_chain"  # UNSPECIFIED.
+    observation_map:
+      linear_case:
+        y_t: "C f_t"
+        C: "UNSPECIFIED"                       # UNSPECIFIED in excerpt.
+      nonlinear_case:
+        y_t: "g(f_t)"
+        g_arch: "UNSPECIFIED"                  # UNSPECIFIED.
+    intervention:
+      t0_selection: "fixed_or_random"          # UNSPECIFIED IN MANUSCRIPT.
+      component_k_selection: "fixed_or_random" # UNSPECIFIED IN MANUSCRIPT.
+      intervention_value_c: 1.0                # UNSPECIFIED IN MANUSCRIPT (placeholder).
+      irf_horizon_H: 20                        # UNSPECIFIED IN MANUSCRIPT (placeholder).
+
+  # Real-world forecasting benchmarks (Section 4.3)
+  REAL_WORLD:
+    ETT:
+      datasets: ["ETTh1", "ETTh2", "ETTm1", "ETTm2"] # Explicit in paper.
+      schema:
+        temporal_col: "date"
+        y_columns: ["HUFL", "HULL", "MUFL", "MULL", "LUFL", "LULL", "OT"] # Typical; exact inclusion UNSPECIFIED.
+        target_col_for_reporting: "OT"         # Your original assumption; metric scope UNSPECIFIED.
+      frequency:
+        "ETTh*": "hourly"                      # Standard benchmark convention; UNSPECIFIED in excerpt.
+        "ETTm*": "15min"                       # Standard benchmark convention; UNSPECIFIED in excerpt.
+    WEATHER:
+      dataset: "Weather"
+      schema:
+        temporal_col: "date"
+        y_columns: "ALL_NUMERIC_EXCEPT_DATE"   # UNSPECIFIED: must be explicit in final run.
+
+# --------------------------------------------------------------------------
+# 3) AUXILIARY VARIABLE u_t AND REGIME EMBEDDING e_t (Section 3.1)
+# --------------------------------------------------------------------------
+CONTEXT_AND_REGIME:
+  u_t_from_date:
+    type: "time_features"                      # UNSPECIFIED IN MANUSCRIPT (placeholder choice).
+    features: ["time_idx", "hour_of_day_sin_cos", "day_of_week_onehot"] # UNSPECIFIED.
+    scaling: "StandardScaler_on_train_only"    # Consistent with anti-drift requirement; UNSPECIFIED.
+  regime_net:
+    enabled: true                              # RegimeNet described; can set False for K=1 runs.
+    num_regimes_K: 7                           # Mentioned in ablation (num_regimes=7).
+    regime_embedding_dim_d: 128                # Mentioned as embedding vectors e_k; exact d UNSPECIFIED.
+    softmax_temperature_tau: 0.2               # Mentioned in ablation.
+    freeze_pi_per_window: true                 # Explicit in Section 3.2 regime note.
+
+# --------------------------------------------------------------------------
+# 4) MODEL ARCHITECTURE (Encoder phi, Decoder g, PriorNet for lambda)
+# --------------------------------------------------------------------------
+MODEL_ARCHITECTURE:
+  # Variational encoder q_phi(eta_t | y_{1:T}, u_t, e_t)
+  VARIATIONAL_ENCODER_phi:
+    posterior_family: "DiagGaussian"           # Explicit in Methods.
+    inputs: ["y_window_1_to_T", "u_t", "e_t"]  # Explicit interface.
+    backbone: "MLP"                            # UNSPECIFIED IN MANUSCRIPT (placeholder).
+    layers: 2                                  # Mentioned in ablation narrative; not explicit in main Methods.
+    hidden_units: 128                          # Mentioned in ablation narrative.
+    activation: "ReLU"                         # Mentioned: Swish/LReLU regressed.
+    normalization: "LayerNorm"                 # Mentioned in ablation narrative.
+    dropout: 0.08                              # Mentioned best vs 0.10.
+
+  # Decoder g(f_t) (injective on support assumption)
+  DECODER_g:
+    type: "MLP"                                # Full MLP decoder adopted.
+    layers: 1                                  # Abbreviation: “MLP decoder (128, 1 layer)” mentioned; exact varies UNSPECIFIED.
+    hidden_units: 128                          # Mentioned in ablation narrative.
+    activation: "ReLU"                         # Mentioned.
+    output_dim: "N"                            # N determined by y_columns per dataset.
+    injectivity_strategy: "ASSUMED_ON_SUPPORT" # UNSPECIFIED IN MANUSCRIPT (no enforcement mechanism given).
+
+  # Natural-parameter map lambda(u_t, e_t) for Eq. (1)
+  PRIOR_NET_lambda:
+    inputs: ["u_t", "e_t"]                     # Must exclude y (Appendix A remarks).
+    backbone: "MLP"                            # UNSPECIFIED IN MANUSCRIPT (placeholder).
+    hidden_units: 96                           # Mentioned as tested capacity range 80–96; exact default UNSPECIFIED.
+    layers: 2                                  # UNSPECIFIED.
+    output_parameterization: "Laplace_natural_params" # UNSPECIFIED: must define exact mapping to lambda_i.
+
+# --------------------------------------------------------------------------
+# 5) STRUCTURAL DYNAMICS (Eq. 2; AR(p) companion form option)
+# --------------------------------------------------------------------------
+LATENT_DYNAMICS:
+  transition_equation: "f_{t+1} = Abar_t f_t + Bbar_t eta_t"  # Eq. (2).
+  is_diagonal_Abar_Bbar: true                  # Explicit.
+  transition_type: "AR(p)_Companion_Form"      # Mentioned as supported.
+  latent_dim_r: 5                              # For factor recovery; SCM uses r=3 (override).
+  order_p_default: 3                           # Dataset-specific in ablation narrative.
+  initialization:
+    factor_state_f0: "Single_Window_PCA"       # Mentioned.
+    AR_coefficients: "OLS_from_PCA"            # Mentioned.
+  fast_unrolling_method: "None"                # FFT/Krylov mentioned as possible; actual use UNSPECIFIED.
+
+# --------------------------------------------------------------------------
+# 6) TRAINING & OPTIMIZATION (Algorithm 1 + Eq. 4)
+# --------------------------------------------------------------------------
+TRAINING_OPTIMIZATION:
+  objective_function: "ELBO_Eq_4"              # Eq. (4).
+  algorithm: "Algorithm_1"                     # Explicit algorithm block.
+  optimizer: "Adam"                            # Mentioned in your input; optimizer choice UNSPECIFIED in excerpt.
+  learning_rate:
+    synthetic_factor_recovery: 0.002           # Explicit in Appendix C protocol.
+    forecasting: 0.0005                        # Within 0.0004–0.0006 range mentioned; exact UNSPECIFIED.
+  max_epochs:
+    synthetic: 200                             # Explicit in Appendix C protocol.
+    ETTm1: 60                                  # Mentioned.
+    default_forecasting: 60                    # UNSPECIFIED placeholder.
+  batching:
+    batch_size: 32                             # UNSPECIFIED IN MANUSCRIPT (placeholder).
+    window_sampling: "stride_windows"          # Consistent with forecasting protocol.
+  weight_decay: 1.0e-05                        # Mentioned “small impact”; exact UNSPECIFIED.
+  beta_KL: 1.0                                 # Mentioned as small impact; exact UNSPECIFIED.
+
+# --------------------------------------------------------------------------
+# 7) PREPROCESSING (Section 4.3)
+# --------------------------------------------------------------------------
+PRE_PROCESSING:
+  sort_by_time: true                           # UNSPECIFIED but required.
+  drop_or_impute_missing: "drop_rows"          # UNSPECIFIED (placeholder).
+  scaling_method: "StandardScaler"
+  scaler_fit_scope: "train_only"               # Explicit in forecasting protocol.
+  evaluation_space: "standardized"             # Explicit (metrics computed in standardized space).
+
+# --------------------------------------------------------------------------
+# 8) EVALUATION PROTOCOLS (Experiments 1–3)
+# --------------------------------------------------------------------------
+EVALUATION_PROTOCOLS:
+  # Experiment (1): factor recovery
+  FACTOR_RECOVERY:
+    num_simulations: 10                        # Explicit.
+    tuning_policy: "Tune_iVDFM_on_dynamic_only" # Explicit.
+    metrics:
+      matching: "MaxWeight_MCC"
+      subspace_metric: "Principal_Angle"
+      smoothness: "Avg_L2_Step"                # Exact formula UNSPECIFIED in excerpt.
+      explained_variance: "Trace_R2"           # Exact formula UNSPECIFIED in excerpt.
+
+  # Experiment (2): causal intervention
+  CAUSAL_INTERVENTION:
+    num_simulations: 5                         # Explicit.
+    do_intervention_level: "innovation_eta"    # Explicit.
+    model_implied_irf_steps:
+      - "fit_on_observational_data"
+      - "set_eta_t0_k_to_c"
+      - "propagate_dynamics"
+      - "decode_y_baseline_and_do"
+      - "irf = y_do - y_baseline"
+    metrics: ["IRF-MSE", "IRF-MAE", "Sign_Acc", "IRF_Corr"] # Explicit list in tables.
+
+  # Experiment (3): probabilistic forecasting
+  FORECASTING:
+    horizons_H: [96, 192, 336, 720]            # Explicit.
+    window_size: 96                            # Explicit in protocol.
+    training_stride: 25                        # Explicit.
+    max_rolling_origins: 10                    # Explicit.
+    origin_selection_rule: "stride_fixed"      # UNSPECIFIED in excerpt; placeholder.
+    probabilistic_metric: "CRPS"
+    point_metric: "MSE_standardized"
+    quantiles: [0.1, 0.5, 0.9]                 # Explicit.
+    predictive_quantile_method:
+      type: "MonteCarlo"                       # UNSPECIFIED in excerpt; placeholder.
+      num_samples: 200                         # UNSPECIFIED in excerpt; placeholder.
+      include_obs_noise: true                  # Consistent with generative model; UNSPECIFIED.
+    crps_estimator: "Quantile_CRPS_Discrete"   # UNSPECIFIED in excerpt; placeholder that must be pinned down.
+    aggregation: "avg_over_vars_horizon_origins" # Explicit in spirit; exact order UNSPECIFIED.
+
+# --------------------------------------------------------------------------
+# 9) BASELINES & COMPARATORS (needed to reproduce Tables 1 and 3)
+# --------------------------------------------------------------------------
+BASELINES:
+  factor_recovery: ["DFM", "DDFM", "VAE", "iVAE"] # Explicit.
+  forecasting: ["iTransformer", "TimeMixer", "TimeXer", "DDFM", "MLP"] # Explicit in Table 3/5.
+  baseline_implementations_source: "UNSPECIFIED"  # Must point to exact repos/versions.
+
+# --------------------------------------------------------------------------
+# 10) DATASET-SPECIFIC OVERRIDES (Appendix E.3)
+# --------------------------------------------------------------------------
+DATASET_OVERRIDES:
+  ETTh1:
+    order_p: 2
+    decoder_sigma2: 0.06                       # sigma2 approx; exact UNSPECIFIED.
+  ETTh2:
+    order_p: 2
+    decoder_sigma2: 0.06                       # UNSPECIFIED.
+  ETTm1:
+    order_p: 3
+    window_size: 2000
+    decoder_sigma2: 0.03
+    max_epochs: 60
+  ETTm2:
+    order_p: 3
+    decoder_sigma2: 0.03                       # UNSPECIFIED.
+  Weather:
+    order_p: 3
+    decoder_sigma2: 0.03                       # UNSPECIFIED.
+
+# --------------------------------------------------------------------------
+# 11) LLM / PROMPT TEMPLATES (explicitly absent)
+# --------------------------------------------------------------------------
+LLM_SETTINGS: null                             # Not used; UNSPECIFIED because absent from manuscript.
